@@ -1,0 +1,40 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment variables
+.env
+
+# ML model files
+*.pt
+*.pth
+*.h5
+*.pkl
+*.onnx
+
+# directory
+.directory
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+.directory
+
+# IDE
+.idea/
+.vscode/
+
+# Personal note
+mynotes.txt
