@@ -4,7 +4,7 @@ import numpy as np
 from tensorflow import keras
 
 class ModelService:
-    _model=None
+    _model=None #private
 
     @classmethod
     def load(cls,model_path:str):

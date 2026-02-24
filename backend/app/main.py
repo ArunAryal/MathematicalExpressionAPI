@@ -2,13 +2,27 @@ from fastapi import FastAPI
 from app.core.config import settings
 from app.api.v1.endpoints import predict
 import logging
+from contextlib import asynccontextmanager
+from app.services.model_service import ModelService
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s -%(name)s -%(message)s"
 )
 
-app=FastAPI(title=settings.APP_NAME,debug=settings.DEBUG)
+logger=logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    logger.info("Loading model...")
+    ModelService.load(settings.MODEL_PATH)
+    logger.info("Model loaded successfully.")
+    yield
+    logger.info("Shutting down.")
+    
+# everything before yield runs on startup, everything after runs on shutdown. 
+
+app=FastAPI(title=settings.APP_NAME,debug=settings.DEBUG,lifespan=lifespan)
 # title shows up in automated fastapi docs
 #  if DEBUG=true in your .env, FastAPI runs in debug mode with more detailed error messages
 
