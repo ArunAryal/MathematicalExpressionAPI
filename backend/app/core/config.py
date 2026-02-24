@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     )
     APP_NAME:str='MathExpressionAPI'
     DEBUG:bool=False
-    MODEL_PATH:str ='models/model.pt'
+    MODEL_PATH:str ='models/model.keras'
     API_V1_STR:str='/api/v1'
 
 
