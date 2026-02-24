@@ -1,1 +1,1 @@
-# fastapi app entry point
+# typically used for FastAPI dependency injection things like authentication, database sessions, etc.

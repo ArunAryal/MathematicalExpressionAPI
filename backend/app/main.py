@@ -7,7 +7,7 @@ from app.services.model_service import ModelService
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s -%(name)s -%(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 logger=logging.getLogger(__name__)
@@ -19,7 +19,7 @@ async def lifespan(app:FastAPI):
     logger.info("Model loaded successfully.")
     yield
     logger.info("Shutting down.")
-    
+
 # everything before yield runs on startup, everything after runs on shutdown. 
 
 app=FastAPI(title=settings.APP_NAME,debug=settings.DEBUG,lifespan=lifespan)

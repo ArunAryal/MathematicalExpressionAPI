@@ -13,14 +13,7 @@ wheels/
 .env
 
 # ML model files
-*.pt
-*.pth
-*.h5
-*.pkl
-*.onnx
-
-# directory
-.directory
+models/*.keras
 
 # Testing
 .coverage
