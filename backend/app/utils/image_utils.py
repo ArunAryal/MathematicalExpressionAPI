@@ -1,4 +1,4 @@
-# image preproessing before feeding to model
+# loading image
 import numpy as np 
 from PIL import Image
 import io

@@ -1,6 +1,12 @@
 from fastapi import FastAPI
 from app.core.config import settings
 from app.api.v1.endpoints import predict
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s -%(name)s -%(message)s"
+)
 
 app=FastAPI(title=settings.APP_NAME,debug=settings.DEBUG)
 # title shows up in automated fastapi docs
