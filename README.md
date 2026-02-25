@@ -106,6 +106,7 @@ APP_NAME=MathExpressionAPI
 DEBUG=True
 MODEL_PATH=models/model.keras
 API_V1_STR=/api/v1
+FRONTEND_ORIGIN=http://localhost:3000
 ```
 
 ### Model
