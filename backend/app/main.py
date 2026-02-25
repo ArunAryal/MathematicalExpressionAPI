@@ -4,6 +4,7 @@ from app.api.v1.endpoints import predict
 import logging
 from contextlib import asynccontextmanager
 from app.services.model_service import ModelService
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +26,13 @@ async def lifespan(app:FastAPI):
 app=FastAPI(title=settings.APP_NAME,debug=settings.DEBUG,lifespan=lifespan)
 # title shows up in automated fastapi docs
 #  if DEBUG=true in your .env, FastAPI runs in debug mode with more detailed error messages
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.FRONTEND_ORIGIN],
+    allow_methods=['POST','GET'],
+    allow_headers=["*"]
+)
 
 app.include_router(predict.router,prefix=f"{settings.API_V1_STR}/predict",tags=["predict"])
 # predict.router is a collection of routes defined in a separate file, and include_router plugs them into the main app. The prefix automatically adds /api/v1/predict in front of all those routes, so you don't have to repeat it in every route definition. tags just groups them together in the auto-generated docs for better organization.

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     DEBUG:bool=False
     MODEL_PATH:str ='models/model.keras'
     API_V1_STR:str='/api/v1'
+    FRONTEND_ORIGIN:str = "http://localhost:3000"
 
 
     
