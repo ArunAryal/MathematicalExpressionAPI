@@ -21,37 +21,37 @@ A FastAPI backend for recognizing and solving handwritten mathematical expressio
 
 ## Overview
 
-The user draws a mathematical expression on a canvas in the frontend. The image is sent to this backend, which passes it through a deep learning model trained on the [CROHME dataset](https://tc11.cvc.uab.es/datasets/ICDAR2019-CROHME-TDR_1). The model recognizes the expression and returns a LaTeX string. If the expression is an equation, SymPy solves it automatically.
+The user draws a mathematical expression on a canvas in the frontend. The image is sent to this backend, which passes it through a deep learning model trained on the [MathWriting dataset](https://research.google/blog/mathwriting-a-dataset-for-handwritten-mathematical-expression-recognition/). The model recognizes the expression and returns a LaTeX string. If the expression is an equation, integral, or derivative, SymPy evaluates it automatically.
 
 ## Related Repositories
 
 | Repo | Description |
 |------|-------------|
-| [Frontend](https://github.com/) | Next.js canvas interface [Under development]|
-| [Model Training](https://github.com/) | DL model training on CROHME dataset [Under development]|
+| [Frontend](https://github.com/ApekshyaKoirala/MathematicalExpressionRecognizerFrontend) | Next.js canvas interface |
+| [Model Training](https://www.kaggle.com/models/binitawasthi/hmer) | DL model training on MathWriting dataset |
 
 ## Architecture
 
 ```
 Frontend (Next.js)
     │
-    │  PNG via multipart/form-data
+    │  PNG/JPEG via multipart/form-data
     ▼
 FastAPI Backend  ◄── this repo
     │
-    ├── image_utils.py    → validates and loads image as numpy array
-    ├── model_service.py  → runs inference (Keras model)
-    ├── math_service.py   → detects equation vs expression, solves with SymPy
+    ├── image_utils.py    → validates and loads image as torch tensor
+    ├── model_service.py  → runs inference (PyTorch model)
+    ├── math_service.py   → detects equation/integral/derivative, solves with SymPy
     │
-    └── returns LaTeX string + solution (if equation)
+    └── returns LaTeX string + solution (if applicable)
 ```
 
 ## Tech Stack
 
 - **FastAPI** — API framework
-- **TensorFlow / Keras** — model loading and inference
-- **SymPy** — equation solving
-- **Pillow** — image loading and grayscale conversion
+- **PyTorch** — model loading and inference
+- **SymPy** — equation solving and expression evaluation
+- **Pillow** — image loading and preprocessing
 - **Pydantic v2** — request/response validation
 - **uv** — package management
 
@@ -63,19 +63,22 @@ backend/
 │   ├── api/v1/endpoints/
 │   │   └── predict.py       # POST /api/v1/predict/
 │   ├── core/
-│   │   └── config.py        # settings via pydantic-settings
+│   │   ├── config.py        # settings via pydantic-settings
+│   │   └── vocab.py         # model vocabulary and tokenization
 │   ├── schemas/
 │   │   └── predict.py       # PredictResponse schema
 │   ├── services/
-│   │   ├── model_service.py # Keras model loading and inference
+│   │   ├── model_service.py # PyTorch model loading and inference
 │   │   └── math_service.py  # SymPy equation detection and solving
 │   ├── utils/
-│   │   └── image_utils.py   # image validation and numpy conversion
+│   │   └── image_utils.py   # image validation and tensor conversion
 │   └── main.py              # app entry point, lifespan, router registration
-├── models/                  # place model.keras here (not tracked by git)
+├── models/                  # place hmer.pt here (not tracked by git)
 └── tests/
     └── api/v1/
-        └── test_predict.py
+        ├── test_predict.py
+        ├── test_image_utils.py
+        └── test_model_service.py
 ```
 
 ## Getting Started
@@ -104,14 +107,14 @@ cp .env.example .env
 ```env
 APP_NAME=MathExpressionAPI
 DEBUG=True
-MODEL_PATH=models/model.keras
+MODEL_PATH=models/hmer.pt
 API_V1_STR=/api/v1
 FRONTEND_ORIGIN=http://localhost:3000
 ```
 
 ### Model
 
-Place the trained Keras model at the path specified by `MODEL_PATH` (default: `models/model.keras`). The model file is not tracked by git — obtain it from the [model training repo](https://github.com/).
+Place the trained PyTorch model at the path specified by `MODEL_PATH` (default: `models/hmer.pt`). The model file is not tracked by git — obtain it from the [model training repo](https://www.kaggle.com/models/binitawasthi/hmer).
 
 ### Running
 
@@ -126,13 +129,13 @@ API docs available at `http://localhost:8000/docs`
 
 ### `POST /api/v1/predict/`
 
-Accepts a PNG image via multipart form data.
+Accepts a PNG or JPEG image via multipart form data.
 
 **Request:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `file` | PNG image | Canvas image of handwritten math expression |
+| `file` | PNG or JPEG image | Canvas image of handwritten math expression |
 
 **Response:**
 
@@ -148,13 +151,13 @@ Accepts a PNG image via multipart form data.
 |-------|------|-------------|
 | `latex` | string | Recognized LaTeX string |
 | `is_equation` | boolean | Whether the expression is an equation |
-| `result` | string or null | Solution if equation, null if plain expression |
+| `result` | string or null | Evaluated result if applicable, null otherwise |
 
 **Error Responses:**
 
 | Status | Description |
 |--------|-------------|
-| `400` | Invalid image file or wrong content type |
+| `400` | Invalid image file or unsupported content type |
 | `500` | Internal server error |
 
 ### `GET /health`
@@ -178,7 +181,14 @@ pytest tests/ -v
 | `test_predict_expression` | Plain expression returns correct response with no solution |
 | `test_predict_equation` | Equation is solved and result is returned |
 | `test_predict_invalid_file` | Invalid image bytes are rejected with 400 |
-| `test_predict_wrong_content_type` | Non-PNG content type is rejected with 400 |
+| `test_predict_wrong_content_type` | Unsupported content type is rejected with 400 |
+| `test_predict_jpeg_accepted` | JPEG images are accepted |
+| `test_process_image_output_shape` | Preprocessed tensor shape is correct |
+| `test_process_image_values_normalized` | Pixel values are normalized between 0 and 1 |
+| `test_process_image_returns_tensor` | Output is a torch tensor |
+| `test_model_load_bad_path` | Bad model path raises an error |
+| `test_predict_returns_string` | Model predict returns a string |
+| `test_predict_raises_if_model_not_loaded` | Predict raises if model not loaded |
 
 ## License
 
