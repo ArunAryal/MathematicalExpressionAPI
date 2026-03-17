@@ -13,7 +13,7 @@ wheels/
 .env
 
 # ML model files
-models/*.keras
+models/*.pt
 
 # Testing
 .coverage
