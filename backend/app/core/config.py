@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     )
     APP_NAME:str='MathExpressionAPI'
     DEBUG:bool=False
-    MODEL_PATH:str ='models/model.keras'
+    MODEL_PATH:str = "models/hmer.pt"
     API_V1_STR:str='/api/v1'
     FRONTEND_ORIGIN:str = "http://localhost:3000"
 
