@@ -29,7 +29,7 @@ router=APIRouter()
 # Registers a POST endpoint at /. Since main.py added the prefix /api/v1/predict, the full URL becomes /api/v1/predict/. response_model=PredictResponse tells FastAPI to always shape the response according to that pydantic model.
 @router.post('/',response_model=PredictResponse)
 async def predict(file:UploadFile=File(...)):
-    if file.content_type != 'image/png':
+    if file.content_type not in ('image/png','image/jpeg'):
         raise HTTPException(status_code=400,detail="only PNG images are accepted.")
     
     image_bytes=await file.read()

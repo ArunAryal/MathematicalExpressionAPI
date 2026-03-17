@@ -75,6 +75,14 @@ def test_predict_invalid_file():
 def test_predict_wrong_content_type():
     response=client.post(
         'api/v1/predict/',
-        files={"file": ("test.png",make_png_bytes(),'image/jpeg')}
+        files={"file": ("test.pdf",make_png_bytes(),'application/pdf')}
     )
     assert response.status_code==400
+
+def test_predict_jpeg_accepted(mocker):
+    mocker.patch("app.api.v1.endpoints.predict.ModelService.predict", return_value="x^2 + 1")
+    response = client.post(
+        "api/v1/predict/",
+        files={"file": ("test.jpg", make_png_bytes(), "image/jpeg")}
+    )
+    assert response.status_code == 200
