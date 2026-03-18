@@ -26,16 +26,6 @@ class MathService:
         except Exception as e:
             logger.warning("Failed to parse LaTeX input '%s' :%s",latex,e)
             return False,None
-        
-        #equation
-        if isinstance(sympy_obj,Relational):
-            try:
-                solution=solve(Eq(sympy_obj.lhs-sympy_obj.rhs,0))
-                evaluated=[s.doit() if hasattr(s,"doit") else s for s in solution]
-                return True,str(evaluated)
-            except Exception as e:
-                logger.error("Failed to solve equation from input '%s': %s",latex,e)
-                return True , None
             
         # integral
         if any(token in latex for token in INTEGRAL_TOKENS):
@@ -54,6 +44,16 @@ class MathService:
             except Exception as e:
                 logger.error("Failed to evaluate derivative from '%s': %s", latex, e)
                 return False, None
+
+        #equation
+        if isinstance(sympy_obj,Relational):
+            try:
+                solution=solve(Eq(sympy_obj.lhs-sympy_obj.rhs,0))
+                evaluated=[s.doit() if hasattr(s,"doit") else s for s in solution]
+                return True,str(evaluated)
+            except Exception as e:
+                logger.error("Failed to solve equation from input '%s': %s",latex,e)
+                return True , None
 
         #plain expression
         return False,None
