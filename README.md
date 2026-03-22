@@ -107,7 +107,7 @@ cp .env.example .env
 ```env
 APP_NAME=MathExpressionAPI
 DEBUG=True
-MODEL_PATH=backend/models/hmer.pt
+MODEL_PATH=models/hmer.pt
 API_V1_STR=/api/v1
 FRONTEND_ORIGIN=http://localhost:3000
 KAGGLE_USERNAME=your_kaggle_username
