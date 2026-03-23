@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     MODEL_PATH:str = "models/hmer.pt"
     API_V1_STR:str='/api/v1'
     FRONTEND_ORIGIN:str = "http://localhost:3000"
+    KAGGLE_USERNAME: str = ""
+    KAGGLE_KEY: str = ""
 
 
     

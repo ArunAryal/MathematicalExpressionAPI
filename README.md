@@ -92,7 +92,7 @@ backend/
 
 ```bash
 git clone https://github.com/ArunAryal/MathematicalExpressionAPI
-cd MathematicalExpressionAPI/backend
+cd MathematicalExpressionAPI
 uv sync
 ```
 
@@ -110,17 +110,24 @@ DEBUG=True
 MODEL_PATH=models/hmer.pt
 API_V1_STR=/api/v1
 FRONTEND_ORIGIN=http://localhost:3000
+KAGGLE_USERNAME=your_kaggle_username
+KAGGLE_KEY=your_kaggle_api_key
 ```
 
 ### Model
 
-Place the trained PyTorch model at the path specified by `MODEL_PATH` (default: `models/hmer.pt`). The model file is not tracked by git — obtain it from the [model training repo](https://www.kaggle.com/models/binitawasthi/hmer).
+The API automatically downloads the trained PyTorch model on startup if it is not found at the `MODEL_PATH` location. This requires your Kaggle API credentials to be set in the `.env` file because the model will be fetched from the [model training repo](https://www.kaggle.com/models/binitawasthi/hmer).
+
+1. Log in to your [Kaggle](https://www.kaggle.com/) account.
+2. Go to your Account Settings and hit **"Create New Token"** to download `kaggle.json`.
+3. Open `kaggle.json` to find your `username` and `key`, and paste them into your `.env` file.
+
+Alternatively, you can manually place the model at the path specified by `MODEL_PATH` (default: `backend/models/hmer.pt`), and the API will skip the download step.
 
 ### Running
 
 ```bash
-cd backend
-uvicorn app.main:app --reload
+uv run main.py
 ```
 
 API docs available at `http://localhost:8000/docs`

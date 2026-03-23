@@ -4,6 +4,7 @@ from app.api.v1.endpoints import predict
 import logging
 from contextlib import asynccontextmanager
 from app.services.model_service import ModelService
+from app.utils.model_downloader import ensure_model
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(
@@ -15,6 +16,12 @@ logger=logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app:FastAPI):
+    logger.info("Checking for model file...")
+    try:
+        ensure_model(settings.MODEL_PATH)
+    except Exception as e:
+        logger.error(f"Failed to ensure model is present: {e}")
+        
     logger.info("Loading model...")
     ModelService.load(settings.MODEL_PATH)
     logger.info("Model loaded successfully.")
