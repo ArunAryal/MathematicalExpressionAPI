@@ -60,7 +60,7 @@ class MathService:
             try:
                 solution = solve(Eq(sympy_obj.lhs - sympy_obj.rhs, 0))
                 evaluated = [s.doit() if hasattr(s, "doit") else s for s in solution]
-                return True, str(evaluated)
+                return True, str(evaluated[0])
             except Exception as e:
                 logger.error("Failed to solve equation from input '%s': %s", latex, e)
                 return True, None
