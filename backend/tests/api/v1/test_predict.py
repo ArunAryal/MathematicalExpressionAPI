@@ -44,7 +44,7 @@ def test_predict_expression(mocker):
     data=response.json()
     assert data["latex"]=="x^2 + 2x + 1"
     assert not data['is_equation']
-    assert data['result'] is None
+    assert data['result'] is not None
 
 #test case: when model returns the equation, sumpy solves it
 def test_predict_equation(mocker):
