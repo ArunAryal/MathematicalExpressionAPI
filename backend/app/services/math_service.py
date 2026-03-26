@@ -1,7 +1,7 @@
 # uses SymPy to solve/simplify expressions
 
 from sympy.parsing.latex import parse_latex
-from sympy import solve, Eq, Integral, Derivative,simplify
+from sympy import solve, Eq, Integral, Derivative,simplify,Sum
 from sympy.core.relational import Relational
 import logging
 
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 INTEGRAL_TOKENS = (r"\int", r"\iint", r"\oint")
 DERIVATIVE_TOKENS = (r"\frac{d}{d",)
+SUMMATION_TOKENS = (r"\sum",)
 
 class MathService:
     @staticmethod
@@ -54,6 +55,19 @@ class MathService:
             except Exception as e:
                 logger.error("Failed to evaluate derivative from '%s': %s", latex, e)
                 return False, None
+        # summation
+        if any(token in latex for token in SUMMATION_TOKENS):
+            try:
+                if isinstance(sympy_obj, Relational):
+                    if sympy_obj.lhs.has(Sum):
+                        return False, str(sympy_obj.lhs.doit())
+                    else:
+                        return False, str(sympy_obj.rhs.doit())
+                return False, str(sympy_obj.doit())
+            except Exception as e:
+                logger.error("Failed to evaluate summation from '%s': %s", latex, e)
+                return False, None
+
 
         #equation
         if isinstance(sympy_obj, Relational):
