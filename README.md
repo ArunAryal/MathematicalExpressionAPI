@@ -21,7 +21,7 @@ A FastAPI backend for recognizing and solving handwritten mathematical expressio
 
 ## Overview
 
-The user draws a mathematical expression on a canvas in the frontend. The image is sent to this backend, which passes it through a deep learning model trained on the [MathWriting dataset](https://research.google/blog/mathwriting-a-dataset-for-handwritten-mathematical-expression-recognition/). The model recognizes the expression and returns a LaTeX string. If the expression is an equation, integral, or derivative, SymPy evaluates it automatically.
+The user draws a mathematical expression on a canvas in the frontend. The image is sent to this backend, which passes it through a deep learning model trained on the [MathWriting dataset](https://huggingface.co/datasets/deepcopy/MathWriting-human). The model recognizes the expression and returns a LaTeX string. SymPy then evaluates the result where applicable — solving equations, evaluating integrals, derivatives, summations, and products, and simplifying plain expressions.
 
 ## Related Repositories
 
@@ -39,11 +39,13 @@ Frontend (Next.js)
     ▼
 FastAPI Backend  ◄── this repo
     │
-    ├── image_utils.py    → validates and loads image as torch tensor
-    ├── model_service.py  → runs inference (PyTorch model)
-    ├── math_service.py   → detects equation/integral/derivative, solves with SymPy
+    ├── image_utils.py      → validates and loads image as torch tensor
+    ├── model_service.py    → runs inference (PyTorch CNN-Transformer)
+    ├── model_downloader.py → auto-downloads model from Kaggle if not present
+    ├── math_service.py     → evaluates equations, integrals, derivatives,
+    │                         summations, products, and plain expressions
     │
-    └── returns LaTeX string + solution (if applicable)
+    └── returns LaTeX string + evaluated result (if applicable)
 ```
 
 ## Tech Stack
@@ -53,32 +55,36 @@ FastAPI Backend  ◄── this repo
 - **SymPy** — equation solving and expression evaluation
 - **Pillow** — image loading and preprocessing
 - **Pydantic v2** — request/response validation
+- **kagglehub** — automatic model downloading
 - **uv** — package management
 
 ## Project Structure
 
 ```
-backend/
-├── app/
-│   ├── api/v1/endpoints/
-│   │   └── predict.py       # POST /api/v1/predict/
-│   ├── core/
-│   │   ├── config.py        # settings via pydantic-settings
-│   │   └── vocab.py         # model vocabulary and tokenization
-│   ├── schemas/
-│   │   └── predict.py       # PredictResponse schema
-│   ├── services/
-│   │   ├── model_service.py # PyTorch model loading and inference
-│   │   └── math_service.py  # SymPy equation detection and solving
-│   ├── utils/
-│   │   └── image_utils.py   # image validation and tensor conversion
-│   └── main.py              # app entry point, lifespan, router registration
-├── models/                  # place hmer.pt here (not tracked by git)
-└── tests/
-    └── api/v1/
-        ├── test_predict.py
-        ├── test_image_utils.py
-        └── test_model_service.py
+MathExpressionAPI/
+├── main.py                  # root entry point — run from here
+└── backend/
+    ├── app/
+    │   ├── api/v1/endpoints/
+    │   │   └── predict.py       # POST /api/v1/predict/
+    │   ├── core/
+    │   │   ├── config.py        # settings via pydantic-settings
+    │   │   └── vocab.py         # model vocabulary and tokenization
+    │   ├── schemas/
+    │   │   └── predict.py       # PredictResponse schema
+    │   ├── services/
+    │   │   ├── model_service.py # PyTorch model loading and inference
+    │   │   └── math_service.py  # SymPy expression evaluation
+    │   ├── utils/
+    │   │   ├── image_utils.py       # image validation and tensor conversion
+    │   │   └── model_downloader.py  # Kaggle model auto-downloader
+    │   └── main.py              # FastAPI app, lifespan, router registration
+    ├── models/                  # hmer.pt lives here (not tracked by git)
+    └── tests/
+        └── api/v1/
+            ├── test_predict.py
+            ├── test_image_utils.py
+            └── test_model_service.py
 ```
 
 ## Getting Started
@@ -107,7 +113,7 @@ cp .env.example .env
 ```env
 APP_NAME=MathExpressionAPI
 DEBUG=True
-MODEL_PATH=models/hmer.pt
+MODEL_PATH=backend/models/hmer.pt
 API_V1_STR=/api/v1
 FRONTEND_ORIGIN=http://localhost:3000
 KAGGLE_USERNAME=your_kaggle_username
@@ -150,7 +156,7 @@ Accepts a PNG or JPEG image via multipart form data.
 {
   "latex": "x + 2 = 5",
   "is_equation": true,
-  "result": "[3]"
+  "result": "3"
 }
 ```
 
@@ -185,7 +191,7 @@ pytest tests/ -v
 | Test | Description |
 |------|-------------|
 | `test_health` | Server boots and responds correctly |
-| `test_predict_expression` | Plain expression returns correct response with no solution |
+| `test_predict_expression` | Plain expression is simplified and result is returned |
 | `test_predict_equation` | Equation is solved and result is returned |
 | `test_predict_invalid_file` | Invalid image bytes are rejected with 400 |
 | `test_predict_wrong_content_type` | Unsupported content type is rejected with 400 |

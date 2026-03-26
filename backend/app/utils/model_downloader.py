@@ -33,7 +33,7 @@ def ensure_model(model_path: str) -> None:
     logger.info(
         "Model not found at '%s'. Downloading from Kaggle (%s) …",
         target,
-        KAGGLE_MODEL_HANDLE,
+        KAGGLE_MODEL_HANDLE,https://huggingface.co/datasets/deepcopy/MathWriting-human
     )
 
     # Export credentials if provided in configuration
