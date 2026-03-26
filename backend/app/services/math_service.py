@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 INTEGRAL_TOKENS = (r"\int", r"\iint", r"\oint")
 DERIVATIVE_TOKENS = (r"\frac{d}{d",)
 SUMMATION_TOKENS = (r"\sum",)
+PRODUCT_TOKENS = (r"\prod",)
 
 class MathService:
     @staticmethod
@@ -66,6 +67,19 @@ class MathService:
                 return False, str(sympy_obj.doit())
             except Exception as e:
                 logger.error("Failed to evaluate summation from '%s': %s", latex, e)
+                return False, None
+            
+        # product
+        if any(token in latex for token in PRODUCT_TOKENS):
+            try:
+                if isinstance(sympy_obj, Relational):
+                    if sympy_obj.lhs.has(Product):
+                        return False, str(sympy_obj.lhs.doit())
+                    else:
+                        return False, str(sympy_obj.rhs.doit())
+                return False, str(sympy_obj.doit())
+            except Exception as e:
+                logger.error("Failed to evaluate product from '%s': %s", latex, e)
                 return False, None
 
 
