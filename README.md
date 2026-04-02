@@ -28,7 +28,8 @@ The user draws a mathematical expression on a canvas in the frontend. The image 
 | Repo | Description |
 |------|-------------|
 | [Frontend](https://github.com/ApekshyaKoirala/MathematicalExpressionRecognizerFrontend) | Next.js canvas interface |
-| [Model Training](https://www.kaggle.com/models/binitawasthi/hmer) | DL model training on MathWriting dataset |
+|[Training Repo](https://github.com/binit-awasthi/hmer?tab=readme-ov-file#-live-demo) | DL model training script|
+| [Model](https://www.kaggle.com/models/binitawasthi/hmer) | DL model on kaggle |
 
 ## Architecture
 
