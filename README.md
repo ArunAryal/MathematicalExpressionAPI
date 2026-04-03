@@ -17,6 +17,7 @@ A FastAPI backend for recognizing and solving handwritten mathematical expressio
 - [Getting Started](#getting-started)
 - [API Reference](#api-reference)
 - [Testing](#testing)
+- [Contributors](#contributors)
 - [License](#license)
 
 ## Overview
@@ -27,9 +28,8 @@ The user draws a mathematical expression on a canvas in the frontend. The image 
 
 | Repo | Description |
 |------|-------------|
-| [Frontend](https://github.com/ApekshyaKoirala/MathematicalExpressionRecognizerFrontend) | Next.js canvas interface |
-|[Training Repo](https://github.com/binit-awasthi/hmer?tab=readme-ov-file#-live-demo) | DL model training script|
-| [Model](https://www.kaggle.com/models/binitawasthi/hmer) | DL model on kaggle |
+| [Training Repo](https://github.com/binit-awasthi/hmer?tab=readme-ov-file#-live-demo) | DL model training script |
+| [Model](https://www.kaggle.com/models/binitawasthi/hmer) | DL model on Kaggle |
 
 ## Architecture
 
@@ -38,7 +38,7 @@ Frontend (Next.js)
     │
     │  PNG/JPEG via multipart/form-data
     ▼
-FastAPI Backend  ◄── this repo
+FastAPI Backend
     │
     ├── image_utils.py      → validates and loads image as torch tensor
     ├── model_service.py    → runs inference (PyTorch CNN-Transformer)
@@ -58,12 +58,23 @@ FastAPI Backend  ◄── this repo
 - **Pydantic v2** — request/response validation
 - **kagglehub** — automatic model downloading
 - **uv** — package management
+- **Next.js** — frontend canvas interface
 
 ## Project Structure
 
 ```
 MathExpressionAPI/
 ├── main.py                  # root entry point — run from here
+├── frontend/                # Next.js canvas interface
+│   ├── src/
+│   │   ├── app/             # Next.js app router pages
+│   │   ├── components/      # CanvasArea, CanvasControl, Instructions
+│   │   ├── services/        # predictionService.ts — API calls
+│   │   ├── styles/
+│   │   └── utils/
+│   ├── public/
+│   ├── package.json
+│   └── next.config.ts
 └── backend/
     ├── app/
     │   ├── api/v1/endpoints/
@@ -94,13 +105,27 @@ MathExpressionAPI/
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv)
+- Node.js 18+
+- npm
 
 ### Installation
 
 ```bash
 git clone https://github.com/ArunAryal/MathematicalExpressionAPI
 cd MathematicalExpressionAPI
+```
+
+**Backend:**
+
+```bash
 uv sync
+```
+
+**Frontend:**
+
+```bash
+cd frontend
+npm install
 ```
 
 ### Configuration
@@ -123,7 +148,7 @@ KAGGLE_KEY=your_kaggle_api_key
 
 ### Model
 
-The API automatically downloads the trained PyTorch model on startup if it is not found at the `MODEL_PATH` location. This requires your Kaggle API credentials to be set in the `.env` file because the model will be fetched from the [model training repo](https://www.kaggle.com/models/binitawasthi/hmer).
+The API automatically downloads the trained PyTorch model on startup if it is not found at the `MODEL_PATH` location. This requires your Kaggle API credentials to be set in the `.env` file as the model is fetched from Kaggle.
 
 1. Log in to your [Kaggle](https://www.kaggle.com/) account.
 2. Go to your Account Settings and hit **"Create New Token"** to download `kaggle.json`.
@@ -133,11 +158,24 @@ Alternatively, you can manually place the model at the path specified by `MODEL_
 
 ### Running
 
+Start both the backend and frontend in separate terminals.
+
+**Backend** (from repo root):
+
 ```bash
 uv run main.py
 ```
 
 API docs available at `http://localhost:8000/docs`
+
+**Frontend** (from `frontend/`):
+
+```bash
+cd frontend
+npm run dev
+```
+
+App available at `http://localhost:3000`
 
 ## API Reference
 
@@ -203,6 +241,14 @@ pytest tests/ -v
 | `test_model_load_bad_path` | Bad model path raises an error |
 | `test_predict_returns_string` | Model predict returns a string |
 | `test_predict_raises_if_model_not_loaded` | Predict raises if model not loaded |
+
+## Contributors
+
+| Name | Role |
+|------|------|
+| [Arun Aryal](https://github.com/ArunAryal) | Backend |
+| [Apekshya Koirala](https://github.com/ApekshyaKoirala) | Frontend |
+| [Binit Awasthi](https://github.com/binit-awasthi) | Model Training |
 
 ## License
 
