@@ -1,0 +1,1313 @@
+"use client";
+import React, { useRef, useEffect, useState, useCallback } from "react";
+import type { CanvasSettings } from "./CanvasControl";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+interface PredictResponse {
+  latex: string;
+  is_equation: boolean;
+  result: string | null;
+}
+
+function dataURLtoBlob(dataURL: string): Blob {
+  const [header, data] = dataURL.split(",");
+  const mime = header.match(/:(.*?);/)![1];
+  const binary = atob(data);
+  const arr = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+const TIPS = [
+  { icon: "✍️", text: "Write clearly with enough spacing between symbols" },
+  { icon: "➗", text: "Draw a horizontal line for fractions" },
+  { icon: "√", text: "Sketch the radical symbol fully for square roots" },
+  { icon: "⌨️", text: "Use Ctrl+Z / Ctrl+Y to undo and redo" },
+  { icon: "🔢", text: "Exponents go above and to the right of the base" },
+  { icon: "🧹", text: "Use the eraser for small corrections" },
+];
+
+declare global {
+  interface Window {
+    katex: {
+      render: (
+        latex: string,
+        element: HTMLElement,
+        options?: { throwOnError?: boolean; displayMode?: boolean },
+      ) => void;
+    };
+  }
+}
+
+function toLatex(raw: string): string {
+  if (!raw) return raw;
+  return raw
+    .replace(/\*\*/g, "^")
+    .replace(/\*/g, " \\cdot ")
+    .replace(/sqrt\(([^)]+)\)/g, "\\sqrt{$1}")
+    .replace(/\bpi\b/g, "\\pi")
+    .replace(/\b(sin|cos|tan|cot|sec|csc)\(([^)]+)\)/g, "\\$1($2)")
+    .replace(/\blog\(([^)]+)\)/g, "\\log($1)")
+    .replace(/\bln\(([^)]+)\)/g, "\\ln($1)")
+    .replace(/\bexp\(([^)]+)\)/g, "\\exp($1)")
+    .replace(/\binfty\b/g, "\\infty")
+    .replace(/\btheta\b/g, "\\theta")
+    .replace(/\balpha\b/g, "\\alpha")
+    .replace(/\bbeta\b/g, "\\beta")
+    .replace(/\bgamma\b/g, "\\gamma")
+    .replace(/\bdelta\b/g, "\\delta")
+    .replace(/\blambda\b/g, "\\lambda")
+    .replace(/\bmu\b/g, "\\mu")
+    .replace(/\bsigma\b/g, "\\sigma");
+}
+
+function KaTeXSpan({
+  latex,
+  className,
+}: {
+  latex: string;
+  className?: string;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (window.katex) {
+      try {
+        window.katex.render(latex, el, {
+          throwOnError: false,
+          displayMode: false,
+        });
+      } catch {
+        el.textContent = latex;
+      }
+    } else {
+      el.textContent = latex;
+    }
+  }, [latex]);
+
+  return (
+    <span
+      ref={ref}
+      className={`ms-result-chip-val ms-result-chip-val--katex ${className ?? ""}`}
+    />
+  );
+}
+
+export default function CanvasArea() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const snapshotsRef = useRef<ImageData[]>([]);
+  const redoSnapshotsRef = useRef<ImageData[]>([]);
+  const isDrawingRef = useRef(false);
+
+  const [settings, setSettings] = useState<CanvasSettings>({
+    brushSize: 4,
+    brushColor: "#1a1a2e",
+    isEraser: false,
+  });
+  const [eraserSize, setEraserSize] = useState(16);
+
+  const [status, setStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
+  const [prediction, setPrediction] = useState<PredictResponse | null>(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [hasDrawn, setHasDrawn] = useState(false);
+  const [tipsOpen, setTipsOpen] = useState(false);
+  const [katexLoaded, setKatexLoaded] = useState(false);
+  const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+
+  const bounds = useRef({
+    minX: Infinity,
+    minY: Infinity,
+    maxX: -Infinity,
+    maxY: -Infinity,
+  });
+
+  // Load KaTeX dynamically
+  useEffect(() => {
+    if (window.katex) {
+      setKatexLoaded(true);
+      return;
+    }
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href =
+      "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css";
+    document.head.appendChild(link);
+
+    const script = document.createElement("script");
+    script.src =
+      "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js";
+    script.onload = () => setKatexLoaded(true);
+    document.head.appendChild(script);
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    if (snapshotsRef.current.length === 0) return;
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext("2d")!;
+    redoSnapshotsRef.current.push(
+      ctx.getImageData(0, 0, canvas.width, canvas.height),
+    );
+    ctx.putImageData(snapshotsRef.current.pop()!, 0, 0);
+    recalculateBounds();
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    if (redoSnapshotsRef.current.length === 0) return;
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext("2d")!;
+    snapshotsRef.current.push(
+      ctx.getImageData(0, 0, canvas.width, canvas.height),
+    );
+    ctx.putImageData(redoSnapshotsRef.current.pop()!, 0, 0);
+    recalculateBounds();
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        e.preventDefault();
+        handleUndo();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "y") {
+        e.preventDefault();
+        handleRedo();
+      }
+      if (e.key === "Escape") setTipsOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  // ── Unified coordinate helper for both mouse and pointer events ──
+  const getCoordsFromPointer = (
+    e: React.PointerEvent<HTMLCanvasElement> | PointerEvent,
+  ) => {
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+      ox: e.clientX - rect.left,
+      oy: e.clientY - rect.top,
+    };
+  };
+
+  const getCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const scaleX = canvasRef.current!.width / rect.width;
+    const scaleY = canvasRef.current!.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+      ox: e.clientX - rect.left,
+      oy: e.clientY - rect.top,
+    };
+  };
+
+  const updateBounds = (x: number, y: number) => {
+    bounds.current.minX = Math.min(bounds.current.minX, x);
+    bounds.current.minY = Math.min(bounds.current.minY, y);
+    bounds.current.maxX = Math.max(bounds.current.maxX, x);
+    bounds.current.maxY = Math.max(bounds.current.maxY, y);
+  };
+
+  // ── FIX: scan actual pixel data to recompute bounds after erasing ──
+  const recalculateBounds = useCallback(() => {
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext("2d")!;
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        const i = (y * canvas.width + x) * 4;
+        // Any pixel that isn't near-white is considered drawn content
+        if (data[i] < 240 || data[i + 1] < 240 || data[i + 2] < 240) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    bounds.current = { minX, minY, maxX, maxY };
+  }, []);
+
+  const saveSnapshot = () => {
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext("2d")!;
+    snapshotsRef.current.push(
+      ctx.getImageData(0, 0, canvas.width, canvas.height),
+    );
+    if (snapshotsRef.current.length > 40) snapshotsRef.current.shift();
+    redoSnapshotsRef.current = [];
+  };
+
+  // ── Apply drawing style to context (shared by mouse and pointer paths) ──
+  const applyDrawStyle = (
+    ctx: CanvasRenderingContext2D,
+    pressure: number = 1,
+    forceEraser: boolean = false,
+  ) => {
+    const isErase = forceEraser || settings.isEraser;
+    const baseSize = isErase ? eraserSize : settings.brushSize;
+    // For digitizer/stylus: modulate line width by pressure (clamped 0.2–1)
+    const effectivePressure = Math.max(0.2, Math.min(1, pressure));
+    ctx.lineWidth = baseSize * effectivePressure;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    if (isErase) {
+      // destination-out truly removes pixels regardless of canvas background
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.strokeStyle = "rgba(0,0,0,1)";
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = settings.brushColor;
+    }
+  };
+
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    saveSnapshot();
+    isDrawingRef.current = true;
+    setHasDrawn(true);
+    const ctx = canvasRef.current!.getContext("2d")!;
+    const { x, y, ox, oy } = getCoords(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    updateBounds(x, y);
+    setCursorPos({ x: ox, y: oy });
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { x, y, ox, oy } = getCoords(e);
+    setCursorPos({ x: ox, y: oy });
+    if (!isDrawingRef.current) return;
+    const ctx = canvasRef.current!.getContext("2d")!;
+    if (settings.isEraser) {
+      ctx.lineWidth = eraserSize;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.strokeStyle = "rgba(0,0,0,1)";
+    } else {
+      ctx.lineWidth = settings.brushSize;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = settings.brushColor;
+    }
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    // Only expand bounds when drawing (not erasing)
+    // Shrinking is handled in endDrawing via recalculateBounds
+    if (!settings.isEraser) updateBounds(x, y);
+  };
+
+  // ── FIX: always recalculate bounds at end of every stroke ──
+  const endDrawing = () => {
+    isDrawingRef.current = false;
+    const ctx = canvasRef.current!.getContext("2d")!;
+    ctx.closePath();
+    // Always reset to source-over so future draws aren't affected
+    ctx.globalCompositeOperation = "source-over";
+    // Restore white background where pixels were erased to transparent
+    // so the canvas stays white (not checkerboard) for the AI model
+    const canvas = canvasRef.current!;
+    const tmp = document.createElement("canvas");
+    tmp.width = canvas.width;
+    tmp.height = canvas.height;
+    const tctx = tmp.getContext("2d")!;
+    tctx.fillStyle = "#ffffff";
+    tctx.fillRect(0, 0, tmp.width, tmp.height);
+    tctx.drawImage(canvas, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(tmp, 0, 0);
+    setCursorPos(null);
+    // Recalculate from actual pixels — handles erasing shrinking the drawn area
+    recalculateBounds();
+  };
+
+  // ── Digitizer / stylus pointer event handlers ──
+  // These handle pen, touch, and mouse via the Pointer Events API.
+  // The "eraser" button on a stylus (pointerType === "pen", button === 5 or
+  // buttons === 32) automatically activates eraser behaviour.
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      // Only handle pen and touch; mouse is handled by the existing mouse events
+      if (e.pointerType === "mouse") return;
+
+      e.preventDefault();
+      canvasRef.current!.setPointerCapture(e.pointerId);
+
+      // Stylus eraser barrel button: button 5 (some drivers report buttons=32)
+      const isPenEraser =
+        e.pointerType === "pen" && (e.button === 5 || e.buttons === 32);
+
+      saveSnapshot();
+      isDrawingRef.current = true;
+      setHasDrawn(true);
+
+      const ctx = canvasRef.current!.getContext("2d")!;
+      const { x, y, ox, oy } = getCoordsFromPointer(e);
+
+      ctx.beginPath();
+      applyDrawStyle(ctx, e.pressure, isPenEraser);
+
+      ctx.moveTo(x, y);
+      updateBounds(x, y);
+      setCursorPos({ x: ox, y: oy });
+    },
+    [settings, eraserSize],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (e.pointerType === "mouse") return;
+      e.preventDefault();
+
+      const { x, y, ox, oy } = getCoordsFromPointer(e);
+      setCursorPos({ x: ox, y: oy });
+
+      if (!isDrawingRef.current) return;
+
+      const isPenEraser = e.pointerType === "pen" && e.buttons === 32;
+
+      const ctx = canvasRef.current!.getContext("2d")!;
+
+      // Use getCoalescedEvents when available for smoother stylus strokes
+      const events =
+        typeof e.nativeEvent.getCoalescedEvents === "function"
+          ? e.nativeEvent.getCoalescedEvents()
+          : [e.nativeEvent];
+
+      for (const coalesced of events) {
+        const cRect = canvasRef.current!.getBoundingClientRect();
+        const scaleX = canvasRef.current!.width / cRect.width;
+        const scaleY = canvasRef.current!.height / cRect.height;
+        const cx = (coalesced.clientX - cRect.left) * scaleX;
+        const cy = (coalesced.clientY - cRect.top) * scaleY;
+
+        applyDrawStyle(ctx, coalesced.pressure, isPenEraser);
+
+        ctx.lineTo(cx, cy);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+
+        if (!settings.isEraser && !isPenEraser) updateBounds(cx, cy);
+      }
+    },
+    [settings, eraserSize],
+  );
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (e.pointerType === "mouse") return;
+      e.preventDefault();
+      isDrawingRef.current = false;
+      const canvas = canvasRef.current!;
+      const ctx = canvas.getContext("2d")!;
+      ctx.closePath();
+      // Flatten transparent (erased) pixels back to white
+      const tmp = document.createElement("canvas");
+      tmp.width = canvas.width;
+      tmp.height = canvas.height;
+      const tctx = tmp.getContext("2d")!;
+      tctx.fillStyle = "#ffffff";
+      tctx.fillRect(0, 0, tmp.width, tmp.height);
+      tctx.drawImage(canvas, 0, 0);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(tmp, 0, 0);
+      setCursorPos(null);
+      recalculateBounds();
+    },
+    [recalculateBounds],
+  );
+
+  const handleClear = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d")!;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    bounds.current = {
+      minX: Infinity,
+      minY: Infinity,
+      maxX: -Infinity,
+      maxY: -Infinity,
+    };
+    snapshotsRef.current = [];
+    redoSnapshotsRef.current = [];
+    setPrediction(null);
+    setStatus("idle");
+    setErrorMsg("");
+    setHasDrawn(false);
+  }, []);
+
+  // ── FIX: guard against fully-erased canvas returning a blank crop ──
+  const exportCroppedImage = (): string | null => {
+    const canvas = canvasRef.current!;
+    const pad = 12;
+    const { minX, minY, maxX, maxY } = bounds.current;
+    // Nothing drawn, or everything erased
+    if (
+      minX === Infinity ||
+      maxX === -Infinity ||
+      maxX <= minX ||
+      maxY <= minY
+    ) {
+      return null;
+    }
+    const w = maxX - minX + pad * 2;
+    const h = maxY - minY + pad * 2;
+    const tmp = document.createElement("canvas");
+    tmp.width = w;
+    tmp.height = h;
+    const tctx = tmp.getContext("2d")!;
+    tctx.fillStyle = "#ffffff";
+    tctx.fillRect(0, 0, w, h);
+    tctx.drawImage(canvas, minX - pad, minY - pad, w, h, 0, 0, w, h);
+    return tmp.toDataURL("image/png");
+  };
+
+  const handleSubmit = async () => {
+    const imageData = exportCroppedImage();
+    if (!imageData) {
+      setErrorMsg("Draw something first!");
+      setStatus("error");
+      return;
+    }
+    setStatus("loading");
+    setErrorMsg("");
+    setPrediction(null);
+    try {
+      const form = new FormData();
+      form.append("file", dataURLtoBlob(imageData), "expression.png");
+      const res = await fetch(`${API_URL}/api/v1/predict/`, {
+        method: "POST",
+        body: form,
+        
+      }
+    );
+      if (!res.ok)
+        throw new Error(`Server error ${res.status}: ${await res.text()}`);
+      const data: PredictResponse = await res.json();
+      console.log("raw prediction:", JSON.stringify(data));
+      console.log("API URL:", API_URL);
+      setPrediction(data);
+      setStatus("success");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Unknown error");
+      setStatus("error");
+    }
+  };
+
+  return (
+    <div className="ms-root">
+      {/* ── Header ── */}
+      <header className="ms-header">
+        <div className="ms-logo">
+          <span className="ms-logo-sigma">&#x2211;</span>
+          <div>
+            <h1 className="ms-title">MathScript</h1>
+            <p className="ms-tagline">Handwritten Expression Recognizer</p>
+          </div>
+        </div>
+        <div className="ms-header-right">
+          <button
+            className="ms-tips-toggle"
+            onClick={() => setTipsOpen((o) => !o)}
+            aria-label="Show tips"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+            Tips
+          </button>
+        </div>
+      </header>
+
+      {/* ── Workspace ── */}
+      <div className="ms-workspace">
+        {/* Tips panel */}
+        <aside className={"ms-tips" + (tipsOpen ? " ms-tips--open" : "")}>
+          <div className="ms-tips-header">
+            <h2 className="ms-tips-title">
+              <span className="ms-tips-icon">&#x1F4A1;</span> Tips
+            </h2>
+            <button
+              className="ms-tips-close"
+              onClick={() => setTipsOpen(false)}
+              aria-label="Close tips"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <ul className="ms-tips-list">
+            {TIPS.map((tip, i) => (
+              <li key={i} className="ms-tip-item">
+                <span className="ms-tip-emoji">{tip.icon}</span>
+                <span className="ms-tip-text">{tip.text}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="ms-shortcuts">
+            <p className="ms-shortcuts-title">Shortcuts</p>
+            <div className="ms-shortcut-row">
+              <kbd>Ctrl Z</kbd>
+              <span>Undo</span>
+            </div>
+            <div className="ms-shortcut-row">
+              <kbd>Ctrl Y</kbd>
+              <span>Redo</span>
+            </div>
+            <div className="ms-shortcut-row">
+              <kbd>Esc</kbd>
+              <span>Close tips</span>
+            </div>
+          </div>
+        </aside>
+
+        {/* Canvas area */}
+        <div className="ms-center">
+          {/* Toolbar */}
+          <div className="ms-toolbar">
+            {/* ── Row 1: tool mode toggle + action buttons ── */}
+            <div className="ms-toolbar-row ms-toolbar-row--top">
+              {/* Mode pills */}
+              <div className="ms-mode-pills">
+                <button
+                  className={
+                    "ms-pill" + (!settings.isEraser ? " ms-pill--active" : "")
+                  }
+                  onClick={() =>
+                    setSettings((s) => ({ ...s, isEraser: false }))
+                  }
+                  title="Brush mode"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M12 19l7-7 3 3-7 7-3-3z" />
+                    <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+                    <path d="M2 2l7.586 7.586" />
+                    <circle cx="11" cy="11" r="2" />
+                  </svg>
+                  Brush
+                </button>
+                <button
+                  className={
+                    "ms-pill" +
+                    (settings.isEraser ? " ms-pill--eraser-active" : "")
+                  }
+                  onClick={() =>
+                    setSettings((s) => ({ ...s, isEraser: !s.isEraser }))
+                  }
+                  title="Eraser mode"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M20 20H7L3 16l10-10 7 7-3.5 3.5" />
+                    <path d="M6.5 17.5l3-3" />
+                  </svg>
+                  Eraser
+                </button>
+              </div>
+
+              <div className="ms-toolbar-sep" />
+
+              {/* Action buttons */}
+              <div className="ms-action-group">
+                <button
+                  className="ms-tool-btn"
+                  onClick={handleUndo}
+                  title="Undo (Ctrl+Z)"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M3 7v6h6" />
+                    <path d="M3 13C5 7 11 3 17 5s8 8 5 13-9 7-14 4" />
+                  </svg>
+                  Undo
+                </button>
+                <button
+                  className="ms-tool-btn"
+                  onClick={handleRedo}
+                  title="Redo (Ctrl+Y)"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="M21 7v6h-6" />
+                    <path d="M21 13C19 7 13 3 7 5S-1 13 2 18s9 7 14 4" />
+                  </svg>
+                  Redo
+                </button>
+                <button
+                  className="ms-tool-btn ms-tool-btn--danger"
+                  onClick={handleClear}
+                  title="Clear canvas"
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14H6L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4h6v2" />
+                  </svg>
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            {/* ── Row 2: active tool controls ── */}
+            <div className="ms-toolbar-row ms-toolbar-row--controls">
+              {/* Brush controls */}
+              <div
+                className={
+                  "ms-tool-controls" +
+                  (!settings.isEraser ? " ms-tool-controls--visible" : "")
+                }
+              >
+                <div className="ms-control-card ms-control-card--brush">
+                  <div className="ms-control-card-header">
+                    <svg
+                      width="11"
+                      height="11"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                    >
+                      <path d="M12 19l7-7 3 3-7 7-3-3z" />
+                      <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+                    </svg>
+                    <span>Brush</span>
+                  </div>
+                  <div className="ms-control-card-body">
+                    <div className="ms-control-row">
+                      <span className="ms-ctrl-label">Size</span>
+                      <input
+                        type="range"
+                        min={2}
+                        max={20}
+                        value={settings.brushSize}
+                        onChange={(e) =>
+                          setSettings((s) => ({
+                            ...s,
+                            brushSize: +e.target.value,
+                          }))
+                        }
+                        className="ms-slider"
+                      />
+                      <span className="ms-ctrl-val">
+                        {settings.brushSize}px
+                      </span>
+                    </div>
+                    <div className="ms-control-row">
+                      <span className="ms-ctrl-label">Color</span>
+                      <div className="ms-color-wrap">
+                        <input
+                          type="color"
+                          value={settings.brushColor}
+                          onChange={(e) =>
+                            setSettings((s) => ({
+                              ...s,
+                              brushColor: e.target.value,
+                              isEraser: false,
+                            }))
+                          }
+                          className="ms-color-pick"
+                        />
+                        <span className="ms-color-hex">
+                          {settings.brushColor}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Eraser controls */}
+              <div
+                className={
+                  "ms-tool-controls" +
+                  (settings.isEraser ? " ms-tool-controls--visible" : "")
+                }
+              >
+                <div className="ms-control-card ms-control-card--eraser">
+                  <div className="ms-control-card-header">
+                    <svg
+                      width="11"
+                      height="11"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                    >
+                      <path d="M20 20H7L3 16l10-10 7 7-3.5 3.5" />
+                      <path d="M6.5 17.5l3-3" />
+                    </svg>
+                    <span>Eraser</span>
+                  </div>
+                  <div className="ms-control-card-body">
+                    <div className="ms-control-row">
+                      <span className="ms-ctrl-label">Size</span>
+                      <input
+                        type="range"
+                        min={4}
+                        max={60}
+                        value={eraserSize}
+                        onChange={(e) => setEraserSize(+e.target.value)}
+                        className="ms-slider ms-slider--eraser"
+                      />
+                      <span className="ms-ctrl-val">{eraserSize}px</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Canvas */}
+          <div className="ms-canvas-wrap">
+            <canvas
+              ref={canvasRef}
+              width={750}
+              height={460}
+              className="ms-canvas"
+              style={{ cursor: settings.isEraser ? "none" : "crosshair" }}
+              // ── Mouse events (unchanged) ──
+              onMouseDown={startDrawing}
+              onMouseUp={endDrawing}
+              onMouseMove={draw}
+              onMouseLeave={endDrawing}
+              // ── Pointer events for digitizer / stylus / touch ──
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              // Prevent browser default touch/pan so the canvas draws smoothly
+              style={{
+                cursor: settings.isEraser ? "none" : "crosshair",
+                touchAction: "none",
+              }}
+            />
+            {/* Eraser cursor circle overlay */}
+            {settings.isEraser && cursorPos && (
+              <div
+                className="ms-eraser-cursor"
+                style={{
+                  left: cursorPos.x,
+                  top: cursorPos.y,
+                  width: eraserSize,
+                  height: eraserSize,
+                  background: "rgba(255,255,255,0.85)",
+                  boxShadow: `0 0 0 1.5px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.4)`,
+                }}
+              />
+            )}
+            {!hasDrawn && (
+              <div className="ms-placeholder">
+                <span className="ms-placeholder-eq">&#x222B; f(x) dx</span>
+                <span className="ms-placeholder-hint">
+                  start drawing your expression&#x2026;
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Submit */}
+          <div className="ms-submit-row">
+            <button
+              className="ms-submit-btn"
+              onClick={handleSubmit}
+              disabled={status === "loading"}
+            >
+              {status === "loading" ? (
+                <>
+                  <span className="ms-spin" /> Recognizing&#x2026;
+                </>
+              ) : (
+                <>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  >
+                    <polyline points="22 2 11 13" />
+                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  </svg>
+                  Recognize Expression
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Result */}
+          {status === "success" && prediction && (
+            <div className="ms-result">
+              <div className="ms-result-chip ms-result-chip--blue">
+                <span className="ms-result-chip-label">Expression</span>
+                {katexLoaded ? (
+                  <KaTeXSpan
+                    key={prediction.latex}
+                    latex={toLatex(prediction.latex)}
+                  />
+                ) : (
+                  <span className="ms-result-chip-val">
+                    {toLatex(prediction.latex)}
+                  </span>
+                )}
+              </div>
+
+              {prediction.result !== null && (
+                <>
+                  <span className="ms-result-eq-sign">=</span>
+                  <div className="ms-result-chip ms-result-chip--gold">
+                    <span className="ms-result-chip-label">
+                      {prediction.is_equation ? "Solution" : "Result"}
+                    </span>
+                    {katexLoaded ? (
+                      <KaTeXSpan
+                        key={prediction.result}
+                        latex={toLatex(prediction.result)}
+                        className="ms-result-chip-val--gold"
+                      />
+                    ) : (
+                      <span className="ms-result-chip-val ms-result-chip-val--plain-gold">
+                        {toLatex(prediction.result)}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {prediction.is_equation && prediction.result === null && (
+                <span className="ms-result-unsolvable">Could not solve</span>
+              )}
+
+              {!prediction.is_equation && prediction.result === null && (
+                <span className="ms-result-tag">
+                  Expression &#xB7; not an equation
+                </span>
+              )}
+            </div>
+          )}
+
+          {status === "error" && (
+            <div className="ms-error">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              {errorMsg}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {tipsOpen && (
+        <div className="ms-tips-backdrop" onClick={() => setTipsOpen(false)} />
+      )}
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        .ms-root {
+          min-height: 100vh;
+          background: #f7f6f2;
+          background-image:
+            radial-gradient(circle at 15% 85%, rgba(99,102,241,0.04) 0%, transparent 50%),
+            radial-gradient(circle at 85% 15%, rgba(245,158,11,0.05) 0%, transparent 50%);
+          font-family: 'IBM Plex Mono', monospace;
+          display: flex; flex-direction: column; align-items: center;
+          padding: 28px 20px 60px; gap: 28px;
+        }
+
+        /* Header */
+        .ms-header {
+          width: 100%; max-width: 1060px;
+          display: flex; align-items: center; justify-content: space-between;
+          padding-bottom: 20px; border-bottom: 1.5px solid #e5e2d8; gap: 12px;
+        }
+        .ms-header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+        .ms-logo { display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .ms-logo-sigma {
+          width: 44px; height: 44px; flex-shrink: 0;
+          background: #1a1a2e; color: #f5c518; border-radius: 12px;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 24px; font-family: 'Lora', serif;
+          box-shadow: 0 2px 12px rgba(26,26,46,0.15);
+        }
+        .ms-title { font-family: 'Lora', serif; font-size: 24px; color: #1a1a2e; letter-spacing: -0.02em; line-height: 1; }
+        .ms-tagline { font-size: 10px; letter-spacing: 0.14em; color: #9b9480; text-transform: uppercase; margin-top: 4px; }
+        .ms-header-badge {
+          font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+          color: #6366f1; border: 1.5px solid #c7c9f4; background: #eeeffe;
+          padding: 5px 12px; border-radius: 99px; white-space: nowrap;
+        }
+        .ms-tips-toggle {
+          display: none; align-items: center; gap: 6px;
+          font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.06em;
+          color: #4a4438; background: #fff; border: 1.5px solid #e5e2d8; border-radius: 9px;
+          padding: 7px 13px; cursor: pointer; transition: background 0.15s, border-color 0.15s; white-space: nowrap;
+        }
+        .ms-tips-toggle:hover { background: #f0ede6; border-color: #ccc7ba; }
+
+        /* Workspace */
+        .ms-workspace { width: 100%; max-width: 1060px; display: flex; gap: 20px; align-items: flex-start; }
+
+        /* Tips sidebar */
+        .ms-tips {
+          flex-shrink: 0; width: 192px;
+          background: #fff; border: 1.5px solid #e5e2d8; border-radius: 18px;
+          padding: 18px 16px; box-shadow: 0 2px 12px rgba(26,26,46,0.05);
+          position: sticky; top: 24px;
+        }
+        .ms-tips-header {
+          display: flex; align-items: center; justify-content: space-between;
+          margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #f0ede6;
+        }
+        .ms-tips-title { font-family: 'Lora', serif; font-size: 14px; color: #1a1a2e; display: flex; align-items: center; gap: 6px; }
+        .ms-tips-close {
+          display: none; background: none; border: none; color: #9b9480;
+          cursor: pointer; padding: 3px; border-radius: 5px; line-height: 1;
+          transition: color 0.15s, background 0.15s; align-items: center; justify-content: center;
+        }
+        .ms-tips-close:hover { color: #1a1a2e; background: #f0ede6; }
+        .ms-tips-icon { font-size: 14px; }
+        .ms-tips-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+        .ms-tip-item { display: flex; align-items: flex-start; gap: 8px; }
+        .ms-tip-emoji { font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+        .ms-tip-text { font-size: 11px; color: #6b6455; line-height: 1.55; }
+        .ms-shortcuts { margin-top: 18px; padding-top: 14px; border-top: 1px solid #f0ede6; }
+        .ms-shortcuts-title { font-size: 9px; text-transform: uppercase; letter-spacing: 0.14em; color: #b8b0a0; margin-bottom: 8px; }
+        .ms-shortcut-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+        kbd { font-family: 'IBM Plex Mono', monospace; font-size: 9px; background: #f0ede6; color: #4a4438; border: 1px solid #d8d3c8; border-radius: 5px; padding: 2px 7px; }
+        .ms-shortcut-row span { font-size: 10px; color: #9b9480; }
+
+        /* Backdrop */
+        .ms-tips-backdrop {
+          display: none; position: fixed; inset: 0;
+          background: rgba(26,26,46,0.4); z-index: 49;
+          animation: ms-bd-in 0.2s ease;
+        }
+        @keyframes ms-bd-in { from { opacity: 0; } to { opacity: 1; } }
+
+        /* Center */
+        .ms-center { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+        /* Toolbar */
+        .ms-toolbar {
+          background: #fff; border: 1.5px solid #e5e2d8; border-radius: 16px;
+          padding: 12px 16px; display: flex; flex-direction: column; gap: 0;
+          box-shadow: 0 1px 6px rgba(26,26,46,0.04);
+        }
+
+        /* Row 1 */
+        .ms-toolbar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .ms-toolbar-row--top { gap: 8px; }
+        .ms-toolbar-row--controls {
+          overflow: hidden;
+          max-height: 0;
+          padding-top: 0;
+          transition: max-height 0.25s ease, padding-top 0.25s ease;
+        }
+        .ms-toolbar-row--controls:has(.ms-tool-controls--visible) {
+          max-height: 120px;
+          padding-top: 12px;
+        }
+
+        /* Mode pills */
+        .ms-mode-pills {
+          display: flex; background: #f7f6f2; border: 1.5px solid #e5e2d8;
+          border-radius: 10px; padding: 3px; gap: 2px;
+        }
+        .ms-pill {
+          display: flex; align-items: center; gap: 5px;
+          font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.04em;
+          color: #7a7060; background: transparent; border: none; border-radius: 7px;
+          padding: 5px 12px; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+        }
+        .ms-pill:hover { color: #1a1a2e; background: #ede9e0; }
+        .ms-pill--active {
+          background: #1a1a2e; color: #fff;
+          box-shadow: 0 1px 4px rgba(26,26,46,0.18);
+        }
+        .ms-pill--active svg { stroke: #f5c518; }
+        .ms-pill--eraser-active {
+          background: #277270; color: #fff;
+          box-shadow: 0 1px 4px rgba(220,38,38,0.25);
+        }
+        .ms-pill--eraser-active svg { stroke: #fff; }
+
+        .ms-toolbar-sep { flex: 1; }
+
+        /* Action buttons */
+        .ms-action-group { display: flex; align-items: center; gap: 6px; }
+        .ms-tool-btn {
+          display: flex; align-items: center; gap: 5px;
+          font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.04em;
+          color: #4a4438; background: #f7f6f2; border: 1.5px solid #e5e2d8; border-radius: 9px;
+          padding: 6px 12px; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+        }
+        .ms-tool-btn:hover { background: #f0ede6; border-color: #ccc7ba; }
+        .ms-tool-btn--danger:hover { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+
+        /* Row 2 — tool control cards */
+        .ms-tool-controls { display: none; }
+        .ms-tool-controls--visible { display: flex; width: 100%; }
+
+        .ms-control-card {
+          display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+          background: #f7f6f2; border: 1.5px solid #e5e2d8; border-radius: 12px;
+          padding: 10px 16px; width: 100%; gap: 14px;
+          animation: ms-fade-in 0.18s ease;
+        }
+        .ms-control-card--eraser {
+          background: #fff5f5; border-color: #fecaca;
+        }
+        .ms-control-card-header {
+          display: flex; align-items: center; gap: 5px;
+          font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+          color: #9b9480; font-weight: 600; white-space: nowrap; flex-shrink: 0;
+        }
+        .ms-control-card--eraser .ms-control-card-header { color: #dc2626; }
+        .ms-control-card--eraser .ms-control-card-header svg { stroke: #dc2626; }
+        .ms-control-card-body { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; flex: 1; }
+        .ms-control-row { display: flex; align-items: center; gap: 8px; }
+        .ms-ctrl-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em; color: #b8b0a0; white-space: nowrap; }
+        .ms-ctrl-val { font-size: 11px; color: #4a4438; min-width: 32px; text-align: right; }
+
+        /* Sliders */
+        .ms-slider {
+          -webkit-appearance: none; height: 3px; width: 100px;
+          background: #d8d3c8; border-radius: 99px; outline: none; cursor: pointer;
+        }
+        .ms-slider::-webkit-slider-thumb {
+          -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+          background: #1a1a2e; cursor: pointer; border: 2px solid #fff;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+        }
+        .ms-slider--eraser { background: #fecaca; }
+        .ms-slider--eraser::-webkit-slider-thumb { background: #dc2626; }
+
+        /* Color picker */
+        .ms-color-wrap { display: flex; align-items: center; gap: 7px; }
+        .ms-color-pick {
+          width: 28px; height: 28px; border: 1.5px solid #d8d3c8;
+          border-radius: 8px; cursor: pointer; padding: 2px; background: none;
+          flex-shrink: 0;
+        }
+        .ms-color-pick--eraser { border-color: #fca5a5; }
+        .ms-color-hex { font-size: 10px; color: #9b9480; letter-spacing: 0.06em; font-family: 'IBM Plex Mono', monospace; }
+
+        .ms-tool-group { display: flex; align-items: center; gap: 8px; }
+        .ms-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: #9b9480; }
+        .ms-val { font-size: 11px; color: #4a4438; min-width: 28px; }
+
+        /* Canvas */
+        .ms-canvas-wrap {
+          position: relative; border-radius: 16px; overflow: hidden;
+          border: 1.5px solid #e5e2d8;
+          box-shadow: 0 2px 0 #e5e2d8, 0 8px 32px rgba(26,26,46,0.08), inset 0 0 0 1px rgba(255,255,255,0.6);
+          background: #fff;
+        }
+        .ms-canvas { display: block; width: 100%; height: auto; touch-action: none; }
+
+        /* Eraser cursor circle */
+        .ms-eraser-cursor {
+          position: absolute;
+          border-radius: 50%;
+          pointer-events: none;
+          transform: translate(-50%, -50%);
+          transition: width 0.08s ease, height 0.08s ease;
+          will-change: transform;
+        }
+        .ms-placeholder {
+          position: absolute; inset: 0; display: flex; flex-direction: column;
+          align-items: center; justify-content: center;
+          pointer-events: none; user-select: none; gap: 8px;
+          animation: ms-fade-in 0.4s ease;
+        }
+        @keyframes ms-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        .ms-placeholder-eq { font-family: 'Lora', serif; font-style: italic; font-size: 36px; color: #e8e4db; letter-spacing: 0.05em; }
+        .ms-placeholder-hint { font-size: 11px; letter-spacing: 0.1em; color: #c8c3b8; text-transform: uppercase; }
+
+        /* Submit */
+        .ms-submit-row { display: flex; justify-content: flex-end; }
+        .ms-submit-btn {
+          display: flex; align-items: center; gap: 8px;
+          background: #1a1a2e; color: #fff; font-family: 'IBM Plex Mono', monospace;
+          font-size: 12px; letter-spacing: 0.08em; border: none; border-radius: 12px;
+          padding: 12px 26px; cursor: pointer; transition: all 0.15s;
+          box-shadow: 0 2px 0 #0d0d1a, 0 4px 16px rgba(26,26,46,0.2);
+        }
+        .ms-submit-btn:hover:not(:disabled) { background: #2d2d4e; transform: translateY(-1px); box-shadow: 0 3px 0 #0d0d1a, 0 6px 20px rgba(26,26,46,0.25); }
+        .ms-submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .ms-submit-btn svg { stroke: #f5c518; }
+        .ms-spin { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.25); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Result */
+        .ms-result {
+          background: #fff; border: 1.5px solid #e5e2d8; border-radius: 16px;
+          padding: 16px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+          animation: ms-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+          box-shadow: 0 2px 12px rgba(26,26,46,0.06);
+        }
+        @keyframes ms-pop { from { opacity: 0; transform: translateY(8px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        .ms-result-chip { display: flex; flex-direction: column; gap: 3px; padding: 10px 16px; border-radius: 12px; min-width: 0; }
+        .ms-result-chip--blue { background: #eef2ff; border: 1.5px solid #c7c9f4; }
+        .ms-result-chip--gold { background: #fffbeb; border: 1.5px solid #fcd34d; }
+        .ms-result-chip-label { font-size: 8px; text-transform: uppercase; letter-spacing: 0.16em; color: #9b9480; }
+        .ms-result-chip-val { font-family: 'Lora', serif; font-size: 22px; color: #1a1a2e; line-height: 1.2; word-break: break-all; }
+        .ms-result-chip-val--katex { font-size: 20px; color: #1a1a2e; line-height: 1.4; }
+        .ms-result-chip-val--katex .katex { font-size: 1em; }
+        .ms-result-chip-val--gold { color: #92400e !important; }
+        .ms-result-chip-val--gold .katex { color: #92400e; }
+        .ms-result-chip-val--plain-gold { color: #92400e; }
+        .ms-result-chip--gold .ms-result-chip-val { color: #92400e; }
+        .ms-result-eq-sign { font-family: 'Lora', serif; font-size: 26px; color: #c8c3b8; }
+        .ms-result-tag { font-size: 10px; color: #9b9480; letter-spacing: 0.06em; }
+        .ms-result-unsolvable { font-size: 11px; color: #dc2626; letter-spacing: 0.06em; background: #fef2f2; border: 1px solid #fca5a5; padding: 6px 12px; border-radius: 8px; }
+
+        /* Error */
+        .ms-error { display: flex; align-items: center; gap: 8px; background: #fef2f2; border: 1.5px solid #fca5a5; border-radius: 12px; padding: 12px 16px; font-size: 12px; color: #dc2626; letter-spacing: 0.02em; }
+
+        .ms-eraser-options { display: none; }
+        .ms-eraser-divider { display: none; }
+        .ms-size-btn { display: none; }
+
+        @media (max-width: 680px) {
+          .ms-root { padding: 14px 12px 48px; gap: 16px; }
+          .ms-tagline { display: none; }
+          .ms-header-badge { display: none; }
+          .ms-tips-toggle { display: flex; }
+          .ms-workspace { flex-direction: column; }
+
+          .ms-tips {
+            position: fixed !important;
+            top: 0; right: 0; bottom: 0;
+            width: min(290px, 82vw);
+            border-radius: 20px 0 0 20px;
+            border-right: none;
+            z-index: 50;
+            overflow-y: auto;
+            transform: translateX(105%);
+            transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: -8px 0 40px rgba(26,26,46,0.15);
+          }
+          .ms-tips--open { transform: translateX(0) !important; }
+          .ms-tips-close { display: flex; }
+          .ms-tips-backdrop { display: block; }
+
+          .ms-toolbar { padding: 10px 12px; }
+          .ms-pill { padding: 5px 9px; font-size: 10px; }
+          .ms-tool-btn { padding: 5px 8px; font-size: 10px; gap: 4px; }
+          .ms-slider { width: 70px; }
+          .ms-ctrl-label { display: none; }
+          .ms-ctrl-val { min-width: 26px; font-size: 10px; }
+          .ms-color-hex { display: none; }
+          .ms-control-card { padding: 8px 12px; gap: 10px; }
+          .ms-toolbar-row--controls:has(.ms-tool-controls--visible) { max-height: 160px; }
+          .ms-submit-row { justify-content: stretch; }
+          .ms-submit-btn { width: 100%; justify-content: center; }
+          .ms-placeholder-eq { font-size: 24px; }
+          .ms-placeholder-hint { font-size: 9px; }
+        }
+
+        @media (min-width: 681px) and (max-width: 900px) {
+          .ms-tips { width: 168px; }
+          .ms-tips-toggle { display: none !important; }
+        }
+
+        @media (min-width: 901px) {
+          .ms-tips-toggle { display: none !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
