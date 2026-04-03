@@ -32,3 +32,7 @@ Thumbs.db
 
 # Personal note
 mynotes.txt
+
+#frontend
+build_output.txt
+lint_output.txt
