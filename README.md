@@ -1,11 +1,11 @@
-# MathExpressionAPI
+# Handwritten Mathematical Expression Recognition (HMER System)
 
 ![Python](https://img.shields.io/badge/python-3.12+-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.129+-green)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
 
-A FastAPI backend for recognizing and solving handwritten mathematical expressions drawn on an HTML5 canvas.
+A full-stack application for recognizing and solving handwritten mathematical expressions. Draw an expression on the canvas, and the app recognizes it, evaluates it, and renders the result — no typing required.
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ A FastAPI backend for recognizing and solving handwritten mathematical expressio
 
 ## Overview
 
-The user draws a mathematical expression on a canvas in the frontend. The image is sent to this backend, which passes it through a deep learning model trained on the [MathWriting dataset](https://huggingface.co/datasets/deepcopy/MathWriting-human). The model recognizes the expression and returns a LaTeX string. SymPy then evaluates the result where applicable — solving equations, evaluating integrals, derivatives, summations, and products, and simplifying plain expressions.
+The user draws a mathematical expression on the canvas in the frontend. The image is sent to the FastAPI backend, which passes it through a deep learning model trained on the [MathWriting dataset](https://huggingface.co/datasets/deepcopy/MathWriting-human). The model is automatically downloaded from Kaggle on first startup — no manual setup required. The model recognizes the expression and returns a LaTeX string. SymPy then evaluates the result where applicable — solving equations, evaluating integrals, derivatives, summations, and products, and simplifying plain expressions.
 
 ## Related Repositories
 
@@ -148,7 +148,7 @@ KAGGLE_KEY=your_kaggle_api_key
 
 ### Model
 
-The API automatically downloads the trained PyTorch model on startup if it is not found at the `MODEL_PATH` location. This requires your Kaggle API credentials to be set in the `.env` file as the model is fetched from Kaggle.
+The model is automatically downloaded from Kaggle on first startup. No manual download required. You only need your Kaggle API credentials in the `.env` file.
 
 1. Log in to your [Kaggle](https://www.kaggle.com/) account.
 2. Go to your Account Settings and hit **"Create New Token"** to download `kaggle.json`.
